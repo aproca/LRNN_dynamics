@@ -1,0 +1,30 @@
+import numpy as np
+
+constant_args = {
+    'data_out_dir' : 'data/SV_search_constant_nosave/',
+    'results_out_dir' : 'results/SV_search_constant_nosave/',
+    'num_seeds' : 5, 
+    'override_load' : False,
+    'trajectory_length' : 8,
+    'num_samples' : 1000,
+    'num_epochs' : 5000,
+    'lr' : 10,
+    'initialization_scale' : 1e-1,
+    'input_size' : 2,
+    'hidden_size' : 2,
+    'output_size' : 2,
+    'S_config': ['constant','constant'],
+    'delta' : [1,1], 
+    'lambda_0_range' : np.linspace(0, 1.2, 21),
+    'S_T_range' : np.linspace(0, 1.2, 21),
+    'S_TeqS_t' : False,
+    'zero_balanced' : True,
+    'frozen_hidden_layer' : False,
+    'frozen_input_output' : False,
+    'single_output_y' : True,
+    'inout_mode_init' : [0.01, 0.01],
+    'in_mode_init' : [0.1, 0.1],
+    'out_mode_init': [0.1, 0.1],
+    'rec_mode_init': [0.1, 0.1],
+    'num_SV' : 2
+}
