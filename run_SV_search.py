@@ -49,6 +49,9 @@ if __name__ == "__main__":
             SV_search_tape.recurrent_modes[i,j] = tape.recurrent_modes[:,-1,:]
             SV_search_tape.recurrent_modes_mean[i,j] = np.mean(tape.recurrent_modes[:,-1,:])
             SV_search_tape.recurrent_modes_sem[i,j] = stats.sem(tape.recurrent_modes[:,-1,:], axis=None)
+            SV_search_tape.dd_term[i,j] = utils.compute_data_driven_term(args, args.S[:,0,0], SV_search_tape.input_output_modes_mean[i,j], SV_search_tape.recurrent_modes_mean[i,j])
+            SV_search_tape.eff_reg_term[i,j] = utils.compute_effective_regularization_term(args, SV_search_tape.input_output_modes_mean[i,j], SV_search_tape.recurrent_modes_mean[i,j])
+        
 
             utils.save_dict(SV_search_tape, data_path / 'SV_search_tape.pkl') # continuously saving progress
 

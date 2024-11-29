@@ -368,7 +368,9 @@ def get_SV_search_tape(args):
         input_output_modes_mean = np.zeros((len(args.lambda_0_range), len(args.S_T_range))), 
         recurrent_modes_mean = np.zeros((len(args.lambda_0_range), len(args.S_T_range))),
         input_output_modes_sem = np.zeros((len(args.lambda_0_range), len(args.S_T_range))), 
-        recurrent_modes_sem = np.zeros((len(args.lambda_0_range), len(args.S_T_range)))
+        recurrent_modes_sem = np.zeros((len(args.lambda_0_range), len(args.S_T_range))),
+        dd_term = np.zeros((len(args.lambda_0_range), len(args.S_T_range))),
+        eff_reg_term = np.zeros((len(args.lambda_0_range), len(args.S_T_range))),
     )
     tape_module = SimpleNamespace(**tape_elements)
     return tape_module
@@ -376,3 +378,15 @@ def get_SV_search_tape(args):
 def _hash(obj):
     json_obj = encode_json(obj)
     return hash(json.dumps(json_obj, sort_keys=True))
+
+def compute_data_driven_term(args, S, input_output_mode, recurrent_mode):
+    tau = (args.num_samples*args.output_size)/args.lr
+    dd_term = 0
+    for i in range(1, args.trajectory_length+1):
+        dd_term += S[i-1]**2 - 2*input_output_mode*(recurrent_mode**(args.trajectory_length-i))*S[i-1]
+    return dd_term/(2*tau)
+
+def compute_effective_regularization_term(args, input_output_mode, recurrent_mode):
+    tau = (args.num_samples*args.output_size)/args.lr
+    eff_reg_term = (1/(2*tau))*(input_output_mode**2)*((1-(recurrent_mode**(2*args.trajectory_length)))/(1-(recurrent_mode**2)))
+    return eff_reg_term
