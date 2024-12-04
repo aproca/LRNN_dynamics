@@ -1,4 +1,5 @@
 from src import argparser
+from src import search_argparser
 from src import simulate
 from src import SV_configs
 from src import utils
@@ -10,7 +11,20 @@ from scipy import stats
 
 
 if __name__ == "__main__":
-    args = SimpleNamespace(**SV_search_config.constant_args)
+    config_parser = search_argparser.get_parser() 
+    config_args = config_parser.parse_args()
+
+    if config_args.config_name == 'constant':
+        args = SimpleNamespace(**SV_search_config.exponential_args)
+    elif config_args.config_name == 'exponential':
+        args = SimpleNamespace(**SV_search_config.exponential_args)
+    elif config_args.config_name == 'inverse_exponential':
+        args = SimpleNamespace(**SV_search_config.inverse_exponential_args)
+
+    args.trajectory_length = config_args.trajectory_length
+    args.results_out_dir = f'results/SV_search_{config_args.config_name}_nosave_T{config_args.trajectory_length}/'
+    args.data_out_dir = f'data/SV_search_{config_args.config_name}_nosave_T{config_args.trajectory_length}/'
+    
     data_path = Path(args.data_out_dir)
     data_path.mkdir(parents=True, exist_ok=True)
 
