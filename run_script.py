@@ -34,7 +34,10 @@ if __name__ == "__main__":
             print(f"{e}. Override argument on. Re-running simulation.")
 
     if run:
-        tape, data_tape = simulate.run_simulation_multiseed(args)
+        if args.aligned_student_weights:
+            tape, data_tape = simulate.run_simulation_multiseed(args)
+        else:
+            tape, data_tape = simulate.run_simulation_unaligned_RNN(args)
 
     # Saving data and config      
     data_path.mkdir(parents=True, exist_ok=True)
