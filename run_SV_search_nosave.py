@@ -15,7 +15,7 @@ if __name__ == "__main__":
     config_args = config_parser.parse_args()
 
     if config_args.config_name == 'constant':
-        args = SimpleNamespace(**SV_search_config.exponential_args)
+        args = SimpleNamespace(**SV_search_config.constant_args)
     elif config_args.config_name == 'exponential':
         args = SimpleNamespace(**SV_search_config.exponential_args)
     elif config_args.config_name == 'inverse_exponential':
