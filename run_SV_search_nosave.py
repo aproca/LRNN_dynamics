@@ -20,6 +20,8 @@ if __name__ == "__main__":
         args = SimpleNamespace(**SV_search_config.exponential_args)
     elif config_args.config_name == 'inverse_exponential':
         args = SimpleNamespace(**SV_search_config.inverse_exponential_args)
+    elif config_args.config_name == 'dirac_delta':
+        args = SimpleNamespace(**SV_search_config.dirac_delta_args)
 
     args.trajectory_length = config_args.trajectory_length
     args.results_out_dir = f'results/SV_search_{config_args.config_name}_nosave_T{config_args.trajectory_length}/'

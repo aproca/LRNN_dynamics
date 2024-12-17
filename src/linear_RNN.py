@@ -1,7 +1,9 @@
 import numpy as np
 import copy
 import torch
+import torch.nn.functional as F
 from src.utils import loss_function
+from src import utils
 
 # using autograd for now, switch to using just the gradient equations later on
 class LinearRNN:
@@ -92,9 +94,9 @@ class LinearRNN_multiseed:
         self.args = args
         self.tape = tape
         self.seed = seed
-        self.W_x = torch.tensor(copy.deepcopy(tape.W_x[seed][0]), dtype=torch.float32)
-        self.W_h = torch.tensor(copy.deepcopy(tape.W_h[seed][0]), dtype=torch.float32)
-        self.W_y = torch.tensor(copy.deepcopy(tape.W_y[seed][0]), dtype=torch.float32)
+        self.W_x = torch.tensor(copy.deepcopy(tape.W_x[seed][0]), dtype=torch.float64)
+        self.W_h = torch.tensor(copy.deepcopy(tape.W_h[seed][0]), dtype=torch.float64)
+        self.W_y = torch.tensor(copy.deepcopy(tape.W_y[seed][0]), dtype=torch.float64)
         if not args.frozen_input_output:
             self.W_x.requires_grad_()
             self.W_y.requires_grad_()
@@ -110,6 +112,8 @@ class LinearRNN_multiseed:
         h_trajectory = torch.zeros((self.args.num_samples, self.args.trajectory_length, self.args.hidden_size))
         for t in range(self.args.trajectory_length):
             h_t = torch.einsum("ij,bj->bi", self.W_h, h_t) + torch.einsum("ij,bj->bi", self.W_x, X[:,t])
+            if self.args.nonlinear_RNN:
+                h_t = F.relu(h_t)
             y_t = torch.einsum("ij,bj->bi", self.W_y, h_t)
             h_trajectory[:,t] = h_t
             if not self.args.single_output_y:
@@ -125,34 +129,67 @@ class LinearRNN_multiseed:
         for e in range(self.args.num_epochs):
             y_hat, h_trajectory = self.forward(X)
             loss = loss_function(y, y_hat)
-            self.tape.loss[self.seed][e] = loss.detach().numpy()
+            if e % self.args.log_every_e_epoch == 0:
+                self.tape.loss[self.seed][int(e/self.args.log_every_e_epoch)] = loss.detach().numpy()
             loss.backward()
             with torch.no_grad():
                 if not self.args.frozen_input_output:
                     self.W_x -= self.args.lr*self.W_x.grad
                     self.W_y -= self.args.lr*self.W_y.grad
-                    self.tape.W_x_grad[self.seed][e] = self.W_x.grad.detach().numpy()
-                    self.tape.W_y_grad[self.seed][e] = self.W_y.grad.detach().numpy()
+                    if e % self.args.log_every_e_epoch == 0:
+                        self.tape.W_x_grad[self.seed][int(e/self.args.log_every_e_epoch)] = self.W_x.grad.detach().numpy()
+                        self.tape.W_y_grad[self.seed][int(e/self.args.log_every_e_epoch)] = self.W_y.grad.detach().numpy()
                     self.W_x.grad = None
                     self.W_y.grad = None
                 if not self.args.frozen_hidden_layer:
                     self.W_h -= self.args.lr*self.W_h.grad
-                    self.tape.W_h_grad[self.seed][e] = self.W_h.grad.detach().numpy()
+                    if e % self.args.log_every_e_epoch == 0:
+                        self.tape.W_h_grad[self.seed][int(e/self.args.log_every_e_epoch)] = self.W_h.grad.detach().numpy()
                     self.W_h.grad = None
-            self.tape.H[self.seed][e] = copy.deepcopy(h_trajectory.detach().numpy())
-            if e < self.args.num_epochs - 1:
-                self.tape.W_x[self.seed][e+1] = copy.deepcopy(self.W_x.detach().numpy())
-                self.tape.W_h[self.seed][e+1] = copy.deepcopy(self.W_h.detach().numpy())
-                self.tape.W_y[self.seed][e+1] = copy.deepcopy(self.W_y.detach().numpy())
+            if e % self.args.log_every_e_epoch == 0 and self.args.log_H:
+                self.tape.H[self.seed][int(e/self.args.log_every_e_epoch)] = copy.deepcopy(h_trajectory.detach().numpy())
+            if (e < self.args.num_epochs - 1) :
+                if (e+1) % self.args.log_every_e_epoch == 0: 
+                    self.tape.W_x[self.seed][int((e+1)/self.args.log_every_e_epoch)] = copy.deepcopy(self.W_x.detach().numpy())
+                    self.tape.W_h[self.seed][int((e+1)/self.args.log_every_e_epoch)] = copy.deepcopy(self.W_h.detach().numpy())
+                    self.tape.W_y[self.seed][int((e+1)/self.args.log_every_e_epoch)] = copy.deepcopy(self.W_y.detach().numpy())
     
     def project_SVD_space(self, data_tape):
-        for e in range(self.args.num_epochs):
-            for alpha in range(self.args.num_SV):
-                self.tape.input_modes[self.seed][e][alpha] = (self.tape.R_x[self.seed][0].T @ self.tape.W_x[self.seed][e] @ data_tape.V[self.seed])[alpha,alpha]
-                self.tape.recurrent_modes[self.seed][e][alpha] = (self.tape.R_y[self.seed][0].T @ self.tape.W_h[self.seed][e] @ self.tape.R_x[self.seed][0])[alpha,alpha]
-                self.tape.output_modes[self.seed][e][alpha] = (data_tape.U[self.seed].T @ self.tape.W_y[self.seed][e] @ self.tape.R_y[self.seed][0])[alpha,alpha]
-                self.tape.input_output_modes[self.seed][e][alpha] = self.tape.input_modes[self.seed][e, alpha]*self.tape.output_modes[self.seed][e, alpha]
+        if self.args.aligned_student_weights:
+            for e in range(int(self.args.num_epochs/self.args.log_every_e_epoch)):
+                for alpha in range(self.args.num_SV):
+                    self.tape.input_modes[self.seed][e][alpha] = (self.tape.R_x[self.seed][0].T @ self.tape.W_x[self.seed][e] @ data_tape.V[self.seed])[alpha,alpha]
+                    self.tape.recurrent_modes[self.seed][e][alpha] = (self.tape.R_y[self.seed][0].T @ self.tape.W_h[self.seed][e] @ self.tape.R_x[self.seed][0])[alpha,alpha]
+                    self.tape.output_modes[self.seed][e][alpha] = (data_tape.U[self.seed].T @ self.tape.W_y[self.seed][e] @ self.tape.R_y[self.seed][0])[alpha,alpha]
+                    self.tape.input_output_modes[self.seed][e][alpha] = self.tape.input_modes[self.seed][e, alpha]*self.tape.output_modes[self.seed][e, alpha]
     
     def compute_gradient_H(self):
-        for e in range(self.args.num_epochs-1):
-            self.tape.H_grad[self.seed][e+1] = self.tape.H[self.seed][e+1] - self.tape.H[self.seed][e]
+        if self.args.log_H:
+            for e in range(int(self.args.num_epochs/self.args.log_every_e_epoch)-1):
+                self.tape.H_grad[self.seed][e+1] = self.tape.H[self.seed][e+1] - self.tape.H[self.seed][e]
+
+    def compute_hidden_layer_NTK(self, X, y): ## TODO: CHECK THIS!! AND CHECK GRADIENT CALCULATION!! ALSO COMPUTE NTK FOR OUTPUT
+        # TODO: subsample X & y for efficiency (size 20?) (or just use way less samples in training?)
+        if self.args.compute_NTK:
+            tau = (self.args.num_samples*self.args.output_size)/self.args.lr
+            T = self.args.trajectory_length
+            t = self.args.trajectory_length ## arbitrary choice for the point in hidden layer to compute NTK over
+            for e in range(self.args.num_epochs-1):
+                first_half = 0
+                second_half = 0
+                for i in range(1, t+1):
+                    for j in range(1, T+1):
+                        if j < T:
+                            for r in range(0, T-j):
+                                first_term = (t-i)*np.einsum('bj,jj,jp->bp', X[:,i-1], self.tape.W_x[self.seed][e].T @ utils.matrix_power(self.tape.W_h[self.seed][e], T-j-1-r) @ self.tape.W_x[self.seed][e], X[:,j-1].T)
+                                second_term = utils.matrix_power(self.tape.W_h[self.seed][e], t-i-1) @ utils.matrix_power(self.tape.W_h[self.seed][e], r).T @ self.tape.W_y[self.seed][e].T
+                                first_half += np.kron(first_term, second_term)
+                        first_term = np.einsum('bj,jp->bp', X[:,i-1], X[:,j-1].T)
+                        second_term = utils.matrix_power(self.tape.W_h[self.seed][e],t-i) @ utils.matrix_power(self.tape.W_h[self.seed][e], T-j).T @ self.tape.W_y[self.seed][e].T
+                        second_half += np.kron(first_term, second_term)
+                self.tape.H_NTK[self.seed][e] = (first_half + second_half)/tau # P x P
+                y_hat = 0
+                for k in range(1,T+1):
+                    y_hat += np.einsum('ij,bj->bi', self.tape.W_y[self.seed][e] @ utils.matrix_power(self.tape.W_h[self.seed][e], T-k) @ self.tape.W_x[self.seed][e], X[:,k-1])
+                error = (y.detach().numpy().reshape(y_hat.shape)-y_hat).T        # N_y x P
+                self.tape.H_Tp1_grad[self.seed][e] = self.tape.H_NTK[self.seed][e] @ error.flatten('F')     

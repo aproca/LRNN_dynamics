@@ -86,3 +86,32 @@ inverse_exponential_args = {
     'rec_mode_init': [0.1, 0.1],
     'num_SV' : 2
 }
+
+dirac_delta_args = {
+    'data_out_dir' : 'data/SV_search_dirac_delta_nosave_T16/',
+    'results_out_dir' : 'results/SV_search_dirac_delta_nosave_T16/',
+    'num_seeds' : 5, 
+    'override_load' : False,
+    'trajectory_length' : 16,
+    'num_samples' : 1000,
+    'num_epochs' : 5000,
+    'lr' : 10,
+    'initialization_scale' : 1e-1,
+    'input_size' : 2,
+    'hidden_size' : 2,
+    'output_size' : 2,
+    'S_config': ['dirac_delta','dirac_delta'],
+    'delta' : [1,1], 
+    'lambda_0_range' : np.linspace(0, 1.2, 21),
+    'S_T_range' : np.linspace(0, 1.2, 21),
+    'S_TeqS_t' : False,
+    'zero_balanced' : True,
+    'frozen_hidden_layer' : False,
+    'frozen_input_output' : False,
+    'single_output_y' : True,
+    'inout_mode_init' : [0.01, 0.01],
+    'in_mode_init' : [0.1, 0.1],
+    'out_mode_init': [0.1, 0.1],
+    'rec_mode_init': [0.1, 0.1],
+    'num_SV' : 2
+}

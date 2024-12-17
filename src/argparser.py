@@ -30,6 +30,12 @@ def get_parser():
                         help='Num model seeds to perform experiment on')
     parser.add_argument('--override_load', type=str2bool, default=False,
                         help="Overrides load and re-runs simulation even if arguments match previous file.")
+    parser.add_argument('--log_every_e_epoch', type=int, default=100,
+                        help='Set arg to 1 to log for every epoch')
+    parser.add_argument('--log_H', type=str2bool, default=False,
+                        help='Whether to log hidden layer and its gradient')
+    parser.add_argument('--compute_NTK', type=str2bool, default=False)
+    parser.add_argument('--nonlinear_RNN', type=str2bool, default=False)
 
     parser.add_argument('--trajectory_length', type=int, default=10)
     parser.add_argument('--num_samples', type=int, default=10000,
@@ -38,7 +44,7 @@ def get_parser():
                         help='Number of epochs trained on')
     parser.add_argument('--lr', type=float, default=10,
                         help='Learning rate')
-    parser.add_argument('--initialization_scale', type=float, default=1e-1, ## TODO: make it be based on the number of neurons?
+    parser.add_argument('--initialization_scale', type=float, default=1e-2, ## TODO: make it be based on the number of neurons?
                         help='Initialization scale')
 
     parser.add_argument('--input_size', type=int, default=4,
@@ -61,6 +67,7 @@ def get_parser():
     parser.add_argument('--name', type=str, default=None,
                         help='Name of run (for saving)')
     
+    parser.add_argument('--aligned_student_weights', type=str2bool, default=True)
     parser.add_argument('--zero_balanced', type=str2bool, default=True,
                         help='')
     parser.add_argument('--frozen_hidden_layer', type=str2bool, default=False,

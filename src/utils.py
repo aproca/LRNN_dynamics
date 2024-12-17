@@ -218,45 +218,28 @@ def initialize_student(args):
     return W_x, W_h, W_y, dW_x, dW_h, dW_y, R_y, R_x
 
 def initialize_student_multiseed(args, data_tape, seed, tape):
-    # r = torch.rand(args.hidden_size, args.hidden_size)
-    # u,s,v = torch.svd(r, some=False)
     r = np.random.randn(args.hidden_size, args.hidden_size) # SHOULD BE GAUSSIAN NOT UNIFORM
     u,s,v = np.linalg.svd(r)
     R_y = v.T
-    # R_x = torch.linalg.inv(v)
     R_x = np.linalg.inv(v)
 
-    # dW_x = torch.zeros(args.hidden_size, args.input_size)
     dW_x = np.zeros((args.hidden_size, args.input_size))
     if args.zero_balanced:
-        # torch.diag(torch.sqrt(args.inout_mode_init), 0, out=dW_x)
         dW_x = np.diag(np.sqrt(args.inout_mode_init))
     else:
-        # torch.diag(args.in_mode_init, 0, out=dW_x)
         dW_x = np.diag(args.in_mode_init)
     W_x = R_x @ dW_x @ data_tape.V[seed].T
-    # if not args.frozen_input_output:
-    #     W_x.requires_grad_()
 
-    # dW_y = torch.zeros(args.output_size, args.hidden_size)
     dW_y = np.zeros((args.output_size, args.hidden_size))
     if args.zero_balanced:
-        # torch.diag(torch.sqrt(args.inout_mode_init), 0, out=dW_y)
         dW_y = np.diag(np.sqrt(args.inout_mode_init))
     else:
-        # torch.diag(args.out_mode_init, 0, out=dW_y)
         dW_y = np.diag(args.out_mode_init)
     W_y = data_tape.U[seed] @ dW_y @ R_y.T
-    # if not args.frozen_input_output:
-    #     W_y.requires_grad_()
 
-    # dW_h = torch.zeros(args.hidden_size, args.hidden_size)
-    # torch.diag(args.rec_mode_init, 0, out=dW_h)
     dW_h = np.zeros((args.hidden_size, args.hidden_size))
     dW_h = np.diag(args.rec_mode_init)
     W_h = R_y @ dW_h @ R_x.T
-    # if not args.frozen_hidden_layer:
-    #     W_h.requires_grad_()
 
     tape.W_x[seed][0] = W_x 
     tape.W_h[seed][0] = W_h 
@@ -268,28 +251,39 @@ def initialize_student_multiseed(args, data_tape, seed, tape):
     tape.R_x[seed][0] = R_x
     return tape
 
+def initialize_unaligned_student(args, seed, tape): # TODO: check scaling
+    tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.input_size**0.5), size=(args.hidden_size, args.input_size))
+    tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
+    tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
+    return tape
+
 def get_tape_module(args):
     tape_elements = dict(
         loss = (),
         W_x = (args.hidden_size, args.input_size),
         W_h = (args.hidden_size, args.hidden_size),
         W_y = (args.output_size, args.hidden_size),
-        dW_x = (args.hidden_size, args.input_size),
-        dW_h = (args.hidden_size, args.hidden_size),
-        dW_y = (args.output_size, args.hidden_size),
-        R_x = (args.hidden_size, args.hidden_size),
-        R_y = (args.hidden_size, args.hidden_size),
-        H = (args.num_samples, args.trajectory_length, args.hidden_size),
         W_x_grad = (args.hidden_size, args.input_size),
         W_h_grad = (args.hidden_size, args.hidden_size),
         W_y_grad = (args.output_size, args.hidden_size),
-        H_grad = (args.num_samples, args.trajectory_length, args.hidden_size),
-        input_modes = (args.num_SV,),
-        recurrent_modes = (args.num_SV,),
-        output_modes = (args.num_SV,),
-        input_output_modes = (args.num_SV,)
     )
-    tape_module = SimpleNamespace(**{k: np.zeros((args.num_seeds, args.num_epochs) + v) for k,v in tape_elements.items()})
+    if args.aligned_student_weights:
+        tape_elements['dW_x'] = (args.hidden_size, args.input_size)
+        tape_elements['dW_h'] = (args.hidden_size, args.hidden_size)
+        tape_elements['dW_y'] = (args.output_size, args.hidden_size)
+        tape_elements['R_x'] = (args.hidden_size, args.hidden_size)
+        tape_elements['R_y'] = (args.hidden_size, args.hidden_size)
+        tape_elements['input_modes'] = (args.num_SV,)
+        tape_elements['recurrent_modes'] = (args.num_SV,)
+        tape_elements['output_modes'] = (args.num_SV,)
+        tape_elements['input_output_modes'] = (args.num_SV,)
+    if args.log_H:
+        tape_elements['H'] = (args.num_samples, args.trajectory_length, args.hidden_size)
+        tape_elements['H_grad'] = (args.num_samples, args.trajectory_length, args.hidden_size)
+    if args.compute_NTK:
+        tape_elements['H_NTK'] = (args.num_samples, args.num_samples) # double-check
+        tape_elements['H_Tp1_grad'] = (args.num_samples, args.hidden_size) # double-check
+    tape_module = SimpleNamespace(**{k: np.zeros((args.num_seeds, int(args.num_epochs/args.log_every_e_epoch)) + v) for k,v in tape_elements.items()})
     return tape_module
 
 def get_data_tape(args):
