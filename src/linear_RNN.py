@@ -108,7 +108,7 @@ class LinearRNN_multiseed:
             y_hat = torch.zeros((self.args.num_samples, 1, self.args.output_size))
         else:
             y_hat = torch.zeros((self.args.num_samples, self.args.trajectory_length, self.args.output_size))
-        h_t = torch.zeros((self.args.num_samples, self.args.hidden_size), requires_grad=False)
+        h_t = torch.zeros((self.args.num_samples, self.args.hidden_size), requires_grad=False, dtype=torch.float64)
         h_trajectory = torch.zeros((self.args.num_samples, self.args.trajectory_length, self.args.hidden_size))
         for t in range(self.args.trajectory_length):
             h_t = torch.einsum("ij,bj->bi", self.W_h, h_t) + torch.einsum("ij,bj->bi", self.W_x, X[:,t])
@@ -124,8 +124,8 @@ class LinearRNN_multiseed:
         return y_hat, h_trajectory
 
     def train(self, X, y):
-        X = torch.tensor(X, dtype=torch.float32, requires_grad=False)
-        y = torch.tensor(y, dtype=torch.float32, requires_grad=False)
+        X = torch.tensor(X, dtype=torch.float64, requires_grad=False)
+        y = torch.tensor(y, dtype=torch.float64, requires_grad=False)
         for e in range(self.args.num_epochs):
             y_hat, h_trajectory = self.forward(X)
             loss = loss_function(y, y_hat)

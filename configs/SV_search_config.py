@@ -26,7 +26,12 @@ constant_args = {
     'in_mode_init' : [0.1, 0.1],
     'out_mode_init': [0.1, 0.1],
     'rec_mode_init': [0.1, 0.1],
-    'num_SV' : 2
+    'num_SV' : 2,
+    'aligned_student_weights': True,
+    'log_H': False,
+    'compute_NTK': False,
+    'nonlinear_RNN': False,
+    'log_every_e_epoch': 1,
 }
 
 exponential_args = {
@@ -55,7 +60,12 @@ exponential_args = {
     'in_mode_init' : [0.1, 0.1],
     'out_mode_init': [0.1, 0.1],
     'rec_mode_init': [0.1, 0.1],
-    'num_SV' : 2
+    'num_SV' : 2,
+    'aligned_student_weights': True,
+    'log_H': False,
+    'compute_NTK': False,
+    'nonlinear_RNN': False,
+    'log_every_e_epoch': 1,
 }
 
 inverse_exponential_args = {
@@ -84,7 +94,12 @@ inverse_exponential_args = {
     'in_mode_init' : [0.1, 0.1],
     'out_mode_init': [0.1, 0.1],
     'rec_mode_init': [0.1, 0.1],
-    'num_SV' : 2
+    'num_SV' : 2,
+    'aligned_student_weights': True,
+    'log_H': False,
+    'compute_NTK': False,
+    'nonlinear_RNN': False,
+    'log_every_e_epoch': 1,
 }
 
 dirac_delta_args = {
@@ -113,5 +128,10 @@ dirac_delta_args = {
     'in_mode_init' : [0.1, 0.1],
     'out_mode_init': [0.1, 0.1],
     'rec_mode_init': [0.1, 0.1],
-    'num_SV' : 2
+    'num_SV' : 2,
+    'aligned_student_weights': True,
+    'log_H': False,
+    'compute_NTK': False,
+    'nonlinear_RNN': False,
+    'log_every_e_epoch': 1,
 }
