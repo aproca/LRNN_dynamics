@@ -34,7 +34,10 @@ def get_parser():
                         help='Set arg to 1 to log for every epoch')
     parser.add_argument('--log_H', type=str2bool, default=False,
                         help='Whether to log hidden layer and its gradient')
+    parser.add_argument('--log_y_hat', type=str2bool, default=False,
+                        help='Whether to log output and its gradient')
     parser.add_argument('--compute_NTK', type=str2bool, default=False)
+    parser.add_argument('--subsample_NTK', type=str2bool, default=True)
     parser.add_argument('--nonlinear_RNN', type=str2bool, default=False)
 
     parser.add_argument('--trajectory_length', type=int, default=10)
@@ -44,7 +47,7 @@ def get_parser():
                         help='Number of epochs trained on')
     parser.add_argument('--lr', type=float, default=10,
                         help='Learning rate')
-    parser.add_argument('--initialization_scale', type=float, default=1e-2, ## TODO: make it be based on the number of neurons?
+    parser.add_argument('--initialization_scale', type=float, default=1e-2, 
                         help='Initialization scale')
 
     parser.add_argument('--input_size', type=int, default=4,
@@ -53,8 +56,6 @@ def get_parser():
                         help='Hidden layer size')
     parser.add_argument('--output_size', type=int, default=4,
                         help='Output dimensionality')
-    # parser.add_argument('--s_curriculum', type=str, default='',
-    #                     help='Flag to specify which curriculum being trained on.')
     parser.add_argument('--S_config', type=str2list, default=['constant','constant','constant','constant'],
                         help='Flag to specify what configuration of SV trajectories being trained on for each dimension.') 
     parser.add_argument('--delta', type=str2floatlist, default=[1,1,1,1])
@@ -83,19 +84,8 @@ def get_parser():
                         help='')
     parser.add_argument('--out_mode_init', type=str2floatlist, default=[1,1,1,1],
                         help='')
-    parser.add_argument('--rec_mode_init', type=str2floatlist, default=[1,1,1,1], #default=[1,1,-0.99,0.1],
+    parser.add_argument('--rec_mode_init', type=str2floatlist, default=[1,1,1,1], 
                         help='')
     parser.add_argument('--num_SV', type=int, default=4)
-    # parser.add_argument('--sv', type=list, default=[2,1,1,0.05])
-    
-    
-
-    # parser.add_argument('--t_tot', type=float, default=None)
-    # parser.add_argument('--T_tot', type=int, default=None)
-    # parser.add_argument('--tau', type=float, default=None)
-    # parser.add_argument('--dt', type=float, default=1.)
-    # parser.add_argument('--T_tape', type=int, default=-1)
-    # parser.add_argument('--dt_tape', type=float, default=None)
-
 
     return parser

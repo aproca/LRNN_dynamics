@@ -9,6 +9,7 @@ import random
 import os
 from pathlib import Path
 import json
+import matplotlib as mpl
 
 def loss_function(y, y_hat):
     return (1/2)*torch.mean((y-y_hat)**2)
@@ -16,14 +17,9 @@ def loss_function(y, y_hat):
 # For single-output y
 def compute_YXt_correlation(X, y, t):
     X_t = X[:,t-1]
-    # YX_t = 0
-    # for p in range(1, y.shape[0]+1):
-    #     YX_t += y[p-1].reshape(-1,1) @ X[p-1,t-1].reshape(1,-1)
 
-    # parallelized
-    # YX_t = torch.einsum('pij,pjk->pik', y.reshape(y.shape[0], y.shape[1],1), X_t.reshape(X_t.shape[0], 1, -1))
-    # YX_t = torch.sum(YX_t, axis=0)
-    YX_t = np.einsum('pij,pjk->pik', y.reshape(y.shape[0], y.shape[1],1), X_t.reshape(X_t.shape[0], 1, -1))
+    YX_t = np.einsum('pij,pjk->pik', y.reshape(y.shape[0], y.shape[2],1), X_t.reshape(X_t.shape[0], 1, -1))
+    
     YX_t = np.sum(YX_t, axis=0)
     return YX_t
 
@@ -32,44 +28,14 @@ def compute_YtXi_correlation(X, y, t, i):
     X_i = X[:,i-1]
     y_t = y[:,t-1]
 
-    # YtXi = 0
-    # for p in range(1, X.shape[0]+1):
-    #     YtXi += y[p-1,t-1].reshape(1,-1) @ X[p-1,i-1].reshape(1,-1)
-
-    # parallelized
-    # YtXi = torch.einsum('pij,pjk->pik', y_t.reshape(y_t.shape[0], y_t.shape[1],1), X_i.reshape(X_i.shape[0], 1, -1))
-    # YtXi = torch.sum(YtXi, axis=0)
     YtXi = np.einsum('pij,pjk->pik', y_t.reshape(y_t.shape[0], y_t.shape[1],1), X_i.reshape(X_i.shape[0], 1, -1))
     YtXi = np.sum(YtXi, axis=0)
     
     return YtXi
 
-# For single-output y
-def generate_y_T(args, X): 
-    # y = torch.einsum('ij,tjk,kl,ptl->pi', args.U, args.S, args.V.T, X)
-    y = np.einsum('ij,tjk,kl,ptl->pi', args.U, args.S, args.V.T, X)
-    y = y.reshape(y.shape[0], 1, -1)
-    return y
-
 def generate_y_T_multiseed(args, data_tape, seed): 
-    # y = torch.einsum('ij,tjk,kl,ptl->pi', data_tape.U[seed], args.S, data_tape.V[seed].T, data_tape.X[seed])
     y = np.einsum('ij,tjk,kl,ptl->pi', data_tape.U[seed], args.S, data_tape.V[seed].T, data_tape.X[seed])
     y = y.reshape(y.shape[0], 1, -1)
-    return y
-
-# For multi-output y
-def generate_y(args, X): # TODO: parallelize
-    # y = torch.zeros((args.num_samples, args.trajectory_length, args.output_size))
-    y = np.zeros((args.num_samples, args.trajectory_length, args.output_size))
-    for p in range(args.num_samples):
-        for t_y in range(args.trajectory_length):
-            y_pt = 0
-            for t_x in range(args.trajectory_length):
-                y_pt += args.U @ np.diag(args.S[t_y,t_x]) @ args.V.T @ X[p,t_x]
-                # y_pt += args.U @ torch.diag(args.S[t_y,t_x]) @ args.V.T @ X[p,t_x]
-            y[p,t_y] = y_pt
-    # parallelized- check
-    # y = torch.einsum('ij,Ttjk,kl,ptl->pTi', args.U, args.S, args.V.T, X)
     return y
 
 def generate_y_multiseed(args, data_tape, seed): # TODO: parallelize
@@ -91,12 +57,6 @@ def check_x_uncorrelated_whitened(args, X):
     for t in range(1, args.trajectory_length+1):
         XtXt = 0
         X_t = X[:,t-1]
-        # for p in range(1, args.num_samples+1):
-        #     XtXt += X[p-1, t-1].reshape(-1,1) @ X[p-1,t-1].reshape(1,-1)
-
-        # parallelized
-        # XtXt = torch.einsum('pij,pjk->pik',X_t.reshape(X_t.shape[0], -1, 1), X_t.reshape(X_t.shape[0], 1, -1))
-        # XtXt = torch.sum(XtXt, axis=0)
         XtXt = np.einsum('pij,pjk->pik',X_t.reshape(X_t.shape[0], -1, 1), X_t.reshape(X_t.shape[0], 1, -1))
         XtXt = np.sum(XtXt, axis=0)
         # print('Expected: I, Simulation: ', XtXt)
@@ -123,17 +83,7 @@ def check_x_uncorrelated_whitened(args, X):
     print(true_instances/total_instances)
     return true_instances/total_instances
 
-def initialize_LR_SVec(args):
-    # teacher = torch.rand((args.output_size, args.input_size), requires_grad = False) ## SHOULD BE A GAUSSIAN DISTRIBUTION NOT UNIFORM
-    # U, _, V = torch.svd(teacher, some=False)
-    teacher = np.random.randn(args.output_size, args.input_size)
-    U, _, V = np.linalg.svd(teacher)
-    args.U, args.V = U, V
-    return args
-
 def initialize_LR_SVec_multiseed(args, data_tape, seed):
-    # teacher = torch.rand((args.output_size, args.input_size), requires_grad = False)
-    # U, _, V = torch.svd(teacher, some=False)
     teacher = np.random.randn(args.output_size, args.input_size)
     U, _, V = np.linalg.svd(teacher)
     data_tape.U[seed] = U
@@ -151,19 +101,9 @@ def whiten(X):
     return X_whitened / np.sqrt(X.shape[0])
 
 def generate_X(args):
-    # X = torch.normal(0, 0.01, size=(args.num_samples, args.trajectory_length, args.input_size), dtype=torch.float32, requires_grad=False) * np.sqrt(10000/args.num_samples)
     X = np.random.normal(0, 0.01, size=(args.num_samples, args.trajectory_length*args.input_size)).astype(float) 
     X = whiten(X).reshape(args.num_samples, args.trajectory_length, args.input_size)
     return X
-
-def generate_data(args):
-    args = initialize_LR_SVec(args)
-    X = generate_X(args)
-    if args.single_output_y:
-        y = generate_y_T(args, X)
-    else:
-        y = generate_y(args, X)
-    return args, X, y
 
 def generate_data_multiseed(args, data_tape, seed):
     data_tape = initialize_LR_SVec_multiseed(args, data_tape, seed)
@@ -173,49 +113,6 @@ def generate_data_multiseed(args, data_tape, seed):
     else:
         data_tape.y[seed] = generate_y_multiseed(args, data_tape, seed)
     return data_tape
-
-def initialize_student(args):
-    # r = torch.rand(args.hidden_size, args.hidden_size)
-    # u,s,v = torch.svd(r, some=False)
-    r = np.random.randn(args.hidden_size, args.hidden_size) ## GAUSSIAN NOT UNIFORM
-    u,s,v = np.linalg.svd(r)
-    R_y = v.T
-    # R_x = torch.linalg.inv(v)
-    R_x = np.linalg.inv(v)
-
-    # dW_x = torch.zeros(args.hidden_size, args.input_size)
-    dW_x = np.zeros((args.hidden_size, args.input_size))
-    if args.zero_balanced:
-        # torch.diag(torch.sqrt(args.inout_mode_init), 0, out=dW_x)
-        dW_x = np.diag(np.sqrt(args.inout_mode_init))
-    else:
-        # torch.diag(args.in_mode_init, 0, out=dW_x)
-        dW_x = np.diag(args.in_mode_init)
-    W_x = R_x @ dW_x @ args.V.T
-    # if not args.frozen_input_output:
-    #     W_x.requires_grad_()
-
-    # dW_y = torch.zeros(args.output_size, args.hidden_size)
-    dW_y = np.zeros((args.output_size, args.hidden_size))
-    if args.zero_balanced:
-        # torch.diag(torch.sqrt(args.inout_mode_init), 0, out=dW_y)
-        dW_y = np.diag(np.sqrt(args.inout_mode_init))
-    else:
-        # torch.diag(args.out_mode_init, 0, out=dW_y)
-        dW_y = np.diag(args.out_mode_init)
-    W_y = args.U @ dW_y @ R_y.T
-    # if not args.frozen_input_output:
-    #     W_y.requires_grad_()
-
-    # dW_h = torch.zeros(args.hidden_size, args.hidden_size)
-    # torch.diag(args.rec_mode_init, 0, out=dW_h)
-    dW_h = np.zeros((args.hidden_size, args.hidden_size))
-    dW_h = np.diag(args.rec_mode_init)
-    W_h = R_y @ dW_h @ R_x.T
-    # if not args.frozen_hidden_layer:
-    #     W_h.requires_grad_()
-
-    return W_x, W_h, W_y, dW_x, dW_h, dW_y, R_y, R_x
 
 def initialize_student_multiseed(args, data_tape, seed, tape):
     r = np.random.randn(args.hidden_size, args.hidden_size) # SHOULD BE GAUSSIAN NOT UNIFORM
@@ -253,8 +150,8 @@ def initialize_student_multiseed(args, data_tape, seed, tape):
 
 def initialize_unaligned_student(args, seed, tape): # TODO: check scaling
     tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.input_size**0.5), size=(args.hidden_size, args.input_size))
-    tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
-    tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
+    tape.W_h[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
+    tape.W_y[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.output_size, args.hidden_size))
     return tape
 
 def get_tape_module(args):
@@ -266,6 +163,10 @@ def get_tape_module(args):
         W_x_grad = (args.hidden_size, args.input_size),
         W_h_grad = (args.hidden_size, args.hidden_size),
         W_y_grad = (args.output_size, args.hidden_size),
+        input_modes = (args.num_SV,),
+        recurrent_modes = (args.num_SV,),
+        output_modes = (args.num_SV,),
+        input_output_modes = (args.num_SV,),
     )
     if args.aligned_student_weights:
         tape_elements['dW_x'] = (args.hidden_size, args.input_size)
@@ -273,16 +174,27 @@ def get_tape_module(args):
         tape_elements['dW_y'] = (args.output_size, args.hidden_size)
         tape_elements['R_x'] = (args.hidden_size, args.hidden_size)
         tape_elements['R_y'] = (args.hidden_size, args.hidden_size)
-        tape_elements['input_modes'] = (args.num_SV,)
-        tape_elements['recurrent_modes'] = (args.num_SV,)
-        tape_elements['output_modes'] = (args.num_SV,)
-        tape_elements['input_output_modes'] = (args.num_SV,)
     if args.log_H:
         tape_elements['H'] = (args.num_samples, args.trajectory_length, args.hidden_size)
         tape_elements['H_grad'] = (args.num_samples, args.trajectory_length, args.hidden_size)
+    if args.log_y_hat: 
+        if args.single_output_y:
+            tape_elements['y_hat'] = (args.num_samples, 1, args.output_size)
+            tape_elements['y_hat_grad'] = (args.num_samples, 1, args.output_size)
+        else:
+            tape_elements['y_hat'] = (args.num_samples, args.trajectory_length, args.output_size)
+            tape_elements['y_hat_grad'] = (args.num_samples, args.trajectory_length, args.output_size)
     if args.compute_NTK:
-        tape_elements['H_NTK'] = (args.num_samples, args.num_samples) # double-check
-        tape_elements['H_Tp1_grad'] = (args.num_samples, args.hidden_size) # double-check
+        num_samples = args.num_samples
+        if args.subsample_NTK:
+            num_samples = 50
+        tape_elements['H_NTK'] = (num_samples*args.output_size, num_samples*args.output_size) # double-check
+        tape_elements['H_Tp1_grad'] = (num_samples, args.hidden_size) # double-check
+        tape_elements['NTK'] = (num_samples*args.output_size, num_samples*args.output_size)
+        if args.single_output_y:
+            tape_elements['pred_y_grad'] = (num_samples, 1, args.output_size)
+        else:
+            tape_elements['pred_y_grad'] = (num_samples, args.trajectory_length, args.output_size)
     tape_module = SimpleNamespace(**{k: np.zeros((args.num_seeds, int(args.num_epochs/args.log_every_e_epoch)) + v) for k,v in tape_elements.items()})
     return tape_module
 
@@ -300,12 +212,12 @@ def get_data_tape(args):
     return tape_module
 
 def matrix_power(matrix, exponent):
-    if exponent == 0: #<= 0:
+    if exponent == 0: 
         return identity_matrix(matrix.shape)
-    product = matrix #.detach().numpy().copy()
+    product = matrix 
     for i in range(exponent - 1):
-        product = product @ matrix #.detach().numpy().copy()
-    return product #torch.tensor(product)
+        product = product @ matrix 
+    return product 
 
 def identity_matrix(shape): 
     matrix = np.zeros((shape))
@@ -384,3 +296,55 @@ def compute_effective_regularization_term(args, input_output_mode, recurrent_mod
     tau = (args.num_samples*args.output_size)/args.lr
     eff_reg_term = (1/(2*tau))*(input_output_mode**2)*((1-(recurrent_mode**(2*args.trajectory_length)))/(1-(recurrent_mode**2)))
     return eff_reg_term
+
+class BlindColours:
+    def __init__(self, reverse_cmap=True):
+        # Set the visual style for seaborn plots
+#         sns.set_style("ticks", {
+#             'xtick.bottom': True,
+#             'xtick.top': False,
+#             'ytick.left': True,
+#             'ytick.right': False,
+#             'xtick.direction': 'out',
+#             'ytick.direction': 'out',
+#             'xtick.color': '.1',
+#             'ytick.color': '.1',
+#         })
+
+        # Set the context for seaborn plots to "talk" (a high level of detail)
+#         sns.set_context("talk")
+
+        # Define a set of colors that are accessible to individuals with color blindness
+        hex_colours = ["#d65c00", "#0071b2", "#009e73", "#cc78a6", "#e59c00", "#55b2e8", "#efe440", "#000000"]
+        self.blind_colours = [mpl.colors.to_rgb(h) for h in hex_colours]
+
+        # Define a diverging colormap
+        div = ['#6d0000', '#720400', '#770900', '#7c0d00', '#821200', '#871600', '#8b1b00', '#901f00', '#952300',
+               '#9a2700', '#9f2c00', '#a33000', '#a83400', '#ad3800', '#b13c00', '#b64000', '#bb4500', '#bf4900',
+               '#c44d00', '#c85100', '#cc5604', '#cf5b09', '#d3600e', '#d66513', '#d96a18', '#dd6f1d', '#e07422',
+               '#e37927', '#e67e2c', '#ea8331', '#ed8836', '#f08d3b', '#f3923f', '#f69744', '#f99b49', '#fda04e',
+               '#ffa555', '#feac62', '#fdb26e', '#fdb87a', '#fcbe87', '#fbc492', '#faca9e', '#f9d5b4', '#f8dabf',
+               '#f8e0ca', '#f7e5d5', '#f6ebe0', '#f6f0ea', '#ecf2f6', '#e3eef7', '#d9ebf8', '#d0e7f8', '#c6e4f9',
+               '#bde0fa', '#b3ddfb', '#a9d9fc', '#9fd6fd', '#95d2fe', '#8bceff', '#85cafc', '#80c6f9', '#7bc2f6',
+               '#75bef2', '#70baef', '#6bb6ec', '#66b1e9', '#61ade5', '#5ba9e2', '#56a5df', '#51a1dc', '#4c9dd8',
+               '#4799d5', '#4295d2', '#3c91cf', '#378dcb', '#3289c8', '#2d85c5', '#2881c2', '#237dbf', '#2079ba',
+               '#1e75b6', '#1c71b1', '#1a6dad', '#1969a8', '#1765a4', '#15619f', '#135d9b', '#115996', '#105592',
+               '#0e518e', '#0c4d89', '#0a4a85', '#094681', '#07427d', '#053e79', '#033b74', '#023770', '#00346c']
+        if reverse_cmap:
+            div.reverse()  # Reverse the colormap if specified
+        self.div_cmap = mpl.colors.ListedColormap(div)
+
+        # Define color steps for specific color ranges
+        oranges = [mpl.colors.to_rgb(h) for h in ['#871500', '#a93700', '#cc5400', '#ef721c', '#ff9c4a']]
+        blues = [mpl.colors.to_rgb(h) for h in ['#00356e', '#005492', '#0975b7', '#4895d9', '#70b6fd']]
+        greens = [mpl.colors.to_rgb(h) for h in ['#003e1d', '#005e39', '#008057', '#09a378', '#46c698']]
+        self.colour_steps = [oranges, blues, greens]
+
+    def get_colours(self):
+        return self.blind_colours
+
+    def get_div_cmap(self):
+        return self.div_cmap
+
+    def get_colour_steps(self):
+        return self.colour_steps

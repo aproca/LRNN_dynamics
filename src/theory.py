@@ -44,6 +44,7 @@ class TheoryRNN:
     #         for e in range(1,self.args.num_epochs+1):
     #             b_pred[alpha,e-1] = omega[alpha] + (b - omega[alpha])*np.exp((e*u*sum_term)/tau)
     #     return b_pred
+    ## THIS IS THE WRONG VERSION !!
     def recurrent_solution(self): ## have to setup the sv so that a single omega solves equation
         tau = (self.args.num_samples*self.args.output_size)/self.args.lr
         T = self.args.trajectory_length
