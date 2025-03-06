@@ -17,9 +17,7 @@ def loss_function(y, y_hat):
 # For single-output y
 def compute_YXt_correlation(X, y, t):
     X_t = X[:,t-1]
-
     YX_t = np.einsum('pij,pjk->pik', y.reshape(y.shape[0], y.shape[2],1), X_t.reshape(X_t.shape[0], 1, -1))
-    
     YX_t = np.sum(YX_t, axis=0)
     return YX_t
 
@@ -33,22 +31,11 @@ def compute_YtXi_correlation(X, y, t, i):
     
     return YtXi
 
-def generate_y_T_multiseed(args, data_tape, seed): 
+
+
+def generate_y_T_multiseed(args, data_tape, seed):
     y = np.einsum('ij,tjk,kl,ptl->pi', data_tape.U[seed], args.S, data_tape.V[seed].T, data_tape.X[seed])
     y = y.reshape(y.shape[0], 1, -1)
-    return y
-
-def generate_y_multiseed(args, data_tape, seed): # TODO: parallelize
-    y = torch.zeros((args.num_samples, args.trajectory_length, args.output_size))
-    for p in range(args.num_samples):
-        for t_y in range(args.trajectory_length):
-            y_pt = 0
-            for t_x in range(args.trajectory_length):
-                # y_pt += data_tape.U[seed] @ torch.diag(args.S[t_y,t_x]) @ data_tape.V[seed].T @ data_tape.X[seed][p,t_x]
-                y_pt += data_tape.U[seed] @ np.diag(args.S[t_y,t_x]) @ data_tape.V[seed].T @ data_tape.X[seed][p,t_x]
-            y[p,t_y] = y_pt
-    # parallelized- check
-    # y = torch.einsum('ij,Ttjk,kl,ptl->pTi', args.U, args.S, args.V.T, X)
     return y
 
 def check_x_uncorrelated_whitened(args, X):
@@ -106,12 +93,16 @@ def generate_X(args):
     return X
 
 def generate_data_multiseed(args, data_tape, seed):
-    data_tape = initialize_LR_SVec_multiseed(args, data_tape, seed)
-    data_tape.X[seed] = generate_X(args)
-    if args.single_output_y:
-        data_tape.y[seed] = generate_y_T_multiseed(args, data_tape, seed)
+    if args.single_output_rotation:
+        data_tape = generate_rotation_data_multiseed(args, data_tape, seed)
+        # This shoudl generate the U and V ( rotating over time)
     else:
-        data_tape.y[seed] = generate_y_multiseed(args, data_tape, seed)
+        data_tape = initialize_LR_SVec_multiseed(args, data_tape, seed)
+        data_tape.X[seed] = generate_X(args)
+        if args.single_output_y:
+            data_tape.y[seed] = generate_y_T_multiseed(args, data_tape, seed)
+        else:
+            data_tape.y[seed] = generate_y_multiseed(args, data_tape, seed)
     return data_tape
 
 def initialize_student_multiseed(args, data_tape, seed, tape):
@@ -119,14 +110,12 @@ def initialize_student_multiseed(args, data_tape, seed, tape):
     u,s,v = np.linalg.svd(r)
     R_y = v.T
     R_x = np.linalg.inv(v)
-
     dW_x = np.zeros((args.hidden_size, args.input_size))
     if args.zero_balanced:
         dW_x = np.diag(np.sqrt(args.inout_mode_init))
     else:
         dW_x = np.diag(args.in_mode_init)
     W_x = R_x @ dW_x @ data_tape.V[seed].T
-
     dW_y = np.zeros((args.output_size, args.hidden_size))
     if args.zero_balanced:
         dW_y = np.diag(np.sqrt(args.inout_mode_init))
@@ -150,7 +139,7 @@ def initialize_student_multiseed(args, data_tape, seed, tape):
 
 def initialize_unaligned_student(args, seed, tape): # TODO: check scaling
     tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.input_size**0.5), size=(args.hidden_size, args.input_size))
-    tape.W_h[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
+    tape.W_h[seed][0] = np.random.normal(loc=0.0, scale =  args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
     tape.W_y[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.output_size, args.hidden_size))
     return tape
 
@@ -200,16 +189,93 @@ def get_tape_module(args):
 
 def get_data_tape(args):
     tape_elements = dict(
-        U = (args.output_size, args.output_size),
-        V = (args.input_size, args.input_size), 
         X = (args.num_samples, args.trajectory_length, args.input_size),
     )
     if args.single_output_y:
         tape_elements['y'] = (args.num_samples, 1, args.output_size)
     else:
         tape_elements['y'] = (args.num_samples, args.trajectory_length, args.output_size)
+    if args.single_output_rotation:
+        tape_elements['U'] = (args.trajectory_length, args.output_size, args.output_size)
+        tape_elements['V'] = (args.trajectory_length, args.input_size,  args.input_size)
+    else:
+        tape_elements['U'] = (args.output_size, args.output_size)
+        tape_elements['V'] = (args.input_size, args.input_size)
     tape_module = SimpleNamespace(**{k: np.zeros((args.num_seeds,) + v) for k,v in tape_elements.items()})
     return tape_module
+
+def generate_y_multiseed(args, data_tape, seed): # TODO: parallelize
+    y = torch.zeros((args.num_samples, args.trajectory_length, args.output_size))
+    for p in range(args.num_samples):
+        for t_y in range(args.trajectory_length):
+            y_pt = 0
+            for t_x in range(args.trajectory_length):
+                # y_pt += data_tape.U[seed] @ torch.diag(args.S[t_y,t_x]) @ data_tape.V[seed].T @ data_tape.X[seed][p,t_x]
+                y_pt += data_tape.U[seed] @ np.diag(args.S[1,t_y,t_x]) @ data_tape.V[seed].T @ data_tape.X[seed][p,t_x]
+            y[p,t_y] = y_pt
+    # parallelized- check
+    # y = torch.einsum('ij,Ttjk,kl,ptl->pTi', args.U, args.S, args.V.T, X)
+    return y
+
+def create_SV_trajectories(args):
+    S = np.zeros((args.trajectory_length, args.output_size, args.input_size))
+    for alpha in range(args.num_SV):
+        S_alpha = get_SV_trajectory(args, args.S_config[alpha], args.delta[alpha], args.lambda_0[alpha], args.S_T[alpha])
+        S[:,alpha,alpha] = S_alpha
+    return S
+
+def get_SV_trajectory(args, S_config, delta, lambda_0, S_T):
+    ## NOTE: for more custom-made SV trajectories, need to hard-code somewhere
+    S_alpha = np.zeros(args.trajectory_length)
+    if S_config == 'constant':
+        for t in range(1, args.trajectory_length+1):
+            S_t = delta*lambda_0
+            if (t == args.trajectory_length and S_T == S_t) or (t < args.trajectory_length) or (args.S_TeqS_t):
+                S_alpha[t-1] = S_t
+            else:
+                S_alpha[t-1] = S_T
+    elif S_config == 'exponential':
+        for t in range(1, args.trajectory_length+1):
+            S_t = delta*(lambda_0**t)
+            if (t == args.trajectory_length and S_T == S_t) or (t < args.trajectory_length) or (args.S_TeqS_t):
+                S_alpha[t-1] = S_t
+            else:
+                S_alpha[t-1] = S_T
+    elif S_config == 'inverse_exponential':
+        for t in range(1, args.trajectory_length+1):
+            S_t = delta*(lambda_0**(args.trajectory_length-t))
+            if (t == args.trajectory_length and S_T == S_t) or (t < args.trajectory_length) or (args.S_TeqS_t):
+                S_alpha[t-1] = S_t
+            else:
+                S_alpha[t-1] = S_T
+    elif S_config == 'dirac_delta':
+        S_alpha[0] = delta*lambda_0 # (S_1)
+        S_alpha[1:-1] = 0
+        S_alpha[-1] = S_T
+    return S_alpha
+
+def rotation_matrix(theta):
+    """Returns a 2D rotation matrix for angle theta (in radians)."""
+    return np.array([[np.cos(theta), -np.sin(theta)],
+                     [np.sin(theta),  np.cos(theta)]])
+def generate_rotation_data_multiseed(args,data_tape,seed):
+    y = torch.zeros((args.num_samples, args.trajectory_length, args.output_size))
+    for p in range(args.num_samples):
+        angles = np.linspace(0, 2 * np.pi, args.trajectory_length, endpoint=False)
+        rotation_matrices = [rotation_matrix(theta) for theta in angles]
+        #svd_results = [np.svd(R) for R in rotation_matrices]
+        i=0
+        for t_y in range(args.trajectory_length):
+            y[p, t_y] =  torch.from_numpy(rotation_matrices[i]@np.array([1, 0])).float()
+            i = i + 1
+    data_tape.y[seed] = y
+    X = np.random.normal(0, 0.01, size=(args.num_samples, args.input_size)).astype(float)
+    X = (whiten(X))
+    X_replicated = np.repeat(X[np.newaxis, :, :], args.trajectory_length, axis=0)
+    # 4. Reshape to (args.num_samples, args.trajectory_length, args.input_size)
+    X = X_replicated.transpose(1, 0, 2)
+    data_tape.X[seed] = X
+    return data_tape
 
 def matrix_power(matrix, exponent):
     if exponent == 0: 
