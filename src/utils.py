@@ -1,20 +1,18 @@
 import torch
 import numpy as np
-import copy
 from types import SimpleNamespace
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import pickle
 import random
 import os
-from pathlib import Path
 import json
 import matplotlib as mpl
+from scipy.linalg import block_diag
 
 def loss_function(y, y_hat):
     return (1/2)*torch.mean((y-y_hat)**2)
 
-# For single-output y
 def compute_YXt_correlation(X, y, t):
     X_t = X[:,t-1]
 
@@ -23,71 +21,85 @@ def compute_YXt_correlation(X, y, t):
     YX_t = np.sum(YX_t, axis=0)
     return YX_t
 
-# For multi-output y
-def compute_YtXi_correlation(X, y, t, i):
-    X_i = X[:,i-1]
-    y_t = y[:,t-1]
-
-    YtXi = np.einsum('pij,pjk->pik', y_t.reshape(y_t.shape[0], y_t.shape[1],1), X_i.reshape(X_i.shape[0], 1, -1))
-    YtXi = np.sum(YtXi, axis=0)
-    
-    return YtXi
-
 def generate_y_T_multiseed(args, data_tape, seed): 
     y = np.einsum('ij,tjk,kl,ptl->pi', data_tape.U[seed], args.S, data_tape.V[seed].T, data_tape.X[seed])
     y = y.reshape(y.shape[0], 1, -1)
     return y
 
-def generate_y_multiseed(args, data_tape, seed): # TODO: parallelize
-    y = torch.zeros((args.num_samples, args.trajectory_length, args.output_size))
-    for p in range(args.num_samples):
-        for t_y in range(args.trajectory_length):
-            y_pt = 0
-            for t_x in range(args.trajectory_length):
-                # y_pt += data_tape.U[seed] @ torch.diag(args.S[t_y,t_x]) @ data_tape.V[seed].T @ data_tape.X[seed][p,t_x]
-                y_pt += data_tape.U[seed] @ np.diag(args.S[t_y,t_x]) @ data_tape.V[seed].T @ data_tape.X[seed][p,t_x]
-            y[p,t_y] = y_pt
-    # parallelized- check
-    # y = torch.einsum('ij,Ttjk,kl,ptl->pTi', args.U, args.S, args.V.T, X)
+def generate_y_T_eigenspace_multiseed(args, data_tape, seed): 
+    y = np.einsum('ij,tjk,kl,ptl->pi', data_tape.P[seed], args.D, data_tape.P_inv[seed], data_tape.X[seed])
+    y = np.real_if_close(y.reshape(y.shape[0], 1, -1))
     return y
-
-def check_x_uncorrelated_whitened(args, X):
-    true_instances = 0
-    total_instances = 0
-    for t in range(1, args.trajectory_length+1):
-        XtXt = 0
-        X_t = X[:,t-1]
-        XtXt = np.einsum('pij,pjk->pik',X_t.reshape(X_t.shape[0], -1, 1), X_t.reshape(X_t.shape[0], 1, -1))
-        XtXt = np.sum(XtXt, axis=0)
-        # print('Expected: I, Simulation: ', XtXt)
-        # isclose = torch.isclose(torch.eye(X.shape[2]), XtXt, atol=1e-2)
-        # true_instances += torch.count_nonzero(isclose)
-        isclose = np.isclose(np.eye(X.shape[2]), XtXt, atol=1e-2)
-        true_instances += np.count_nonzero(isclose)
-        total_instances += isclose.flatten().shape[0]
-        # print(isclose)
-
-    for t in range(1,args.trajectory_length+1):
-        for t_prime in range(1,args.trajectory_length+1):
-            if t != t_prime:
-                XtXtprime = 0
-                for p in range(1,args.num_samples+1):
-                    XtXtprime += X[p-1,t-1].reshape(-1,1) @ X[p-1, t_prime-1].reshape(1,-1)
-                # print('Expected: 0, Simulation: ', XtXtprime)
-                # isclose = torch.isclose(torch.zeros(X.shape[2], X.shape[2]), XtXtprime, atol=1e-2)
-                # true_instances += torch.count_nonzero(isclose)
-                isclose = np.isclose(np.zeros((X.shape[2], X.shape[2])), XtXtprime, atol=1e-2)
-                true_instances += np.count_nonzero(isclose)
-                total_instances += isclose.flatten().shape[0]
-                # print(isclose)
-    print(true_instances/total_instances)
-    return true_instances/total_instances
 
 def initialize_LR_SVec_multiseed(args, data_tape, seed):
     teacher = np.random.randn(args.output_size, args.input_size)
     U, _, V = np.linalg.svd(teacher)
     data_tape.U[seed] = U
     data_tape.V[seed] = V
+    return data_tape
+
+def block_diagonal_matrix(eigenvalues, tol=1e-12):
+    ev_list = list(eigenvalues)  
+    blocks = []
+    evecs = {}  
+
+    total_dim = 0
+    
+    def block2x2(alpha, beta):
+        return np.array([[alpha, -beta],
+                         [beta,   alpha]], dtype=float)
+
+    i = 0
+    used = [False]*len(ev_list)
+    
+    for i in range(len(ev_list)):
+        if used[i]:
+            continue
+        lam = ev_list[i]
+
+        if abs(lam.imag) < tol:  
+            lam_real = lam.real
+            # 1x1 block
+            blocks.append(np.array([[lam_real]], dtype=float))
+            evecs.setdefault(lam_real, np.array([1.0]))  
+            
+            used[i] = True
+            total_dim += 1
+            
+        else:
+            alpha, beta = lam.real, lam.imag
+            
+            conj_val = alpha - 1j*beta
+            found_conj = False
+            for j in range(i+1, len(ev_list)):
+                if not used[j] and abs(ev_list[j] - conj_val) < tol:
+                    used[j] = True
+                    found_conj = True
+                    break
+            
+            if not found_conj:
+                raise ValueError(f"Eigenvalue {lam} does not have a matching conjugate in the list.")
+            
+            # 2x2 real block
+            B = block2x2(alpha, beta)
+            blocks.append(B)
+            total_dim += 2
+            used[i] = True
+
+            lam_plus  = alpha + 1j*beta
+            lam_minus = alpha - 1j*beta
+
+            evecs.setdefault(lam_plus,  np.array([1.0, 1.0j]))  
+            evecs.setdefault(lam_minus, np.array([1.0,-1.0j]))
+
+    A = block_diag(*blocks)
+    return A, evecs
+
+def initialize_eigenvectors_multiseed(args, data_tape, seed):
+    assert args.output_size == args.input_size
+    teacher, _ = block_diagonal_matrix(np.diag(args.D[0])) 
+    data_tape.P[seed] = np.real_if_close(np.linalg.eig(teacher)[1])
+    data_tape.P_inv[seed] = np.real_if_close(np.conj(np.linalg.eig(teacher)[1]).T) # using conjugate transpose instead of inverse
     return data_tape
 
 def whiten(X): 
@@ -105,14 +117,82 @@ def generate_X(args):
     X = whiten(X).reshape(args.num_samples, args.trajectory_length, args.input_size)
     return X
 
+def generate_eigenspace_data_multiseed(args, data_tape, seed): ## TODO: double check that constructing tasks this way makes sense
+    data_tape = initialize_eigenvectors_multiseed(args, data_tape, seed)
+    data_tape.X[seed] = generate_X(args)
+    data_tape.y[seed] = generate_y_T_eigenspace_multiseed(args, data_tape, seed)
+    return data_tape
+
 def generate_data_multiseed(args, data_tape, seed):
     data_tape = initialize_LR_SVec_multiseed(args, data_tape, seed)
     data_tape.X[seed] = generate_X(args)
-    if args.single_output_y:
-        data_tape.y[seed] = generate_y_T_multiseed(args, data_tape, seed)
-    else:
-        data_tape.y[seed] = generate_y_multiseed(args, data_tape, seed)
+    data_tape.y[seed] = generate_y_T_multiseed(args, data_tape, seed)
     return data_tape
+
+def rotation_matrix(num_dim, theta):
+    """Returns a rotation matrix for angle theta (in radians)."""
+    if num_dim == 2:
+        return np.array([[np.cos(theta), -np.sin(theta)],
+                        [np.sin(theta), np.cos(theta)]])
+    elif num_dim == 3:
+        return np.array([[np.cos(theta)*np.cos(theta), np.cos(theta)*np.sin(theta)*np.sin(theta) - np.sin(theta)*np.cos(theta), np.cos(theta)*np.sin(theta)*np.cos(theta) + np.sin(theta)*np.sin(theta)],
+                         [np.sin(theta)*np.cos(theta), np.sin(theta)*np.sin(theta)*np.sin(theta) + np.cos(theta)*np.cos(theta), np.sin(theta)*np.sin(theta)*np.cos(theta) - np.cos(theta)*np.sin(theta)],
+                         [-np.sin(theta), np.cos(theta)*np.sin(theta), np.cos(theta)*np.cos(theta)]
+                         ])
+
+def generate_y_T_teacher(args, data_tape, seed): ### is it worth just using hidden layer and ignoring Wx,Wy ??
+    if args.task_dynamics == 'random_teacher': 
+        tW_x = np.random.randn(args.hidden_size, args.input_size)
+        tW_h = np.random.randn(args.hidden_size, args.hidden_size)
+        tW_y = np.random.randn(args.output_size, args.hidden_size)
+    elif args.task_dynamics == 'rotation':
+        tW_x = np.eye(args.num_SV) ## ignore rotation of Wx,Wy?
+        tW_h = rotation_matrix(args.num_SV, args.theta) 
+        data_tape.P[seed] = np.real_if_close(np.linalg.eig(tW_h)[1])
+        data_tape.P_inv[seed] = np.real_if_close(np.conj(np.linalg.eig(tW_h)[1]).T) # using conjugate transpose instead of inverse
+        # data_tape.P_inv[seed] = np.real_if_close(np.linalg.inv(np.linalg.eig(tW_h)[1]))
+        data_tape.D[seed] = np.real_if_close(np.linalg.eig(tW_h)[0])
+        tW_y = np.eye(args.num_SV)
+    
+    y = np.zeros((args.num_samples, 1, args.output_size))
+    h_t = np.zeros((args.num_samples, args.hidden_size))
+    for t in range(args.trajectory_length):
+        h_t = np.real_if_close(np.einsum("ij,bj->bi", tW_h, h_t) + np.einsum("ij,bj->bi", tW_x, data_tape.X[seed,:,t]))
+        y_t = np.real_if_close(np.einsum("ij,bj->bi", tW_y, h_t))
+    data_tape.y[seed] = y_t.reshape(args.num_samples, 1, -1)
+    return data_tape
+
+def generate_teacher_data(args, data_tape, seed): 
+    data_tape.X[seed] = generate_X(args)
+    data_tape = generate_y_T_teacher(args, data_tape, seed)
+    return data_tape
+
+def initialize_student_eigenspace_multiseed(args, data_tape, seed, tape):
+    dW_x = np.zeros((args.hidden_size, args.input_size))
+    if args.zero_balanced:
+        dW_x = np.diag(np.sqrt(args.inout_mode_init))
+    else:
+        dW_x = np.diag(args.in_mode_init)
+    W_x = np.real_if_close(data_tape.P[seed] @ dW_x @ data_tape.P_inv[seed])
+
+    dW_y = np.zeros((args.output_size, args.hidden_size))
+    if args.zero_balanced:
+        dW_y = np.diag(np.sqrt(args.inout_mode_init))
+    else:
+        dW_y = np.diag(args.out_mode_init)
+    W_y = np.real_if_close(data_tape.P[seed] @ dW_y @ data_tape.P_inv[seed])
+
+    dW_h = np.zeros((args.hidden_size, args.hidden_size))
+    dW_h = np.diag(args.rec_mode_init)
+    W_h = np.real_if_close(data_tape.P[seed] @ dW_h @ data_tape.P_inv[seed])
+
+    tape.W_x[seed][0] = np.real_if_close(W_x) 
+    tape.W_h[seed][0] = np.real_if_close(W_h) 
+    tape.W_y[seed][0] = np.real_if_close(W_y)
+    tape.dW_x[seed][0] = dW_x
+    tape.dW_h[seed][0] = dW_h
+    tape.dW_y[seed][0] = dW_y
+    return tape
 
 def initialize_student_multiseed(args, data_tape, seed, tape):
     r = np.random.randn(args.hidden_size, args.hidden_size) # SHOULD BE GAUSSIAN NOT UNIFORM
@@ -149,9 +229,14 @@ def initialize_student_multiseed(args, data_tape, seed, tape):
     return tape
 
 def initialize_unaligned_student(args, seed, tape): # TODO: check scaling
-    tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.input_size**0.5), size=(args.hidden_size, args.input_size))
-    tape.W_h[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
-    tape.W_y[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.output_size, args.hidden_size))
+    if args.initialization_scale == None: # TODO: bad practice-- make it's own argument
+        tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = np.sqrt(args.inout_mode_init[0])/(args.input_size**0.5), size=(args.hidden_size, args.input_size))
+        tape.W_h[seed][0] = np.random.normal(loc=0.0, scale = args.rec_mode_init[0]/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
+        tape.W_y[seed][0] = np.random.normal(loc=0.0, scale = np.sqrt(args.inout_mode_init[0])/(args.hidden_size**0.5), size=(args.output_size, args.hidden_size))
+    else:
+        tape.W_x[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.input_size**0.5), size=(args.hidden_size, args.input_size))
+        tape.W_h[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.hidden_size, args.hidden_size))
+        tape.W_y[seed][0] = np.random.normal(loc=0.0, scale = args.initialization_scale/(args.hidden_size**0.5), size=(args.output_size, args.hidden_size))
     return tape
 
 def get_tape_module(args):
@@ -175,27 +260,25 @@ def get_tape_module(args):
         tape_elements['R_x'] = (args.hidden_size, args.hidden_size)
         tape_elements['R_y'] = (args.hidden_size, args.hidden_size)
     if args.log_H:
-        tape_elements['H'] = (args.num_samples, args.trajectory_length, args.hidden_size)
-        tape_elements['H_grad'] = (args.num_samples, args.trajectory_length, args.hidden_size)
-    if args.log_y_hat: 
-        if args.single_output_y:
-            tape_elements['y_hat'] = (args.num_samples, 1, args.output_size)
-            tape_elements['y_hat_grad'] = (args.num_samples, 1, args.output_size)
+        if args.subsample_H:
+            tape_elements['H'] = (200, 1, args.hidden_size)
+            tape_elements['H_grad'] = (200, 1, args.hidden_size)
         else:
-            tape_elements['y_hat'] = (args.num_samples, args.trajectory_length, args.output_size)
-            tape_elements['y_hat_grad'] = (args.num_samples, args.trajectory_length, args.output_size)
+            tape_elements['H'] = (args.num_samples, args.trajectory_length, args.hidden_size)
+            tape_elements['H_grad'] = (args.num_samples, args.trajectory_length, args.hidden_size)
+    if args.log_y_hat: 
+        tape_elements['y_hat'] = (args.num_samples, 1, args.output_size)
+        tape_elements['y_hat_grad'] = (args.num_samples, 1, args.output_size)
     if args.compute_NTK:
         num_samples = args.num_samples
         if args.subsample_NTK:
             num_samples = 50
-        tape_elements['H_NTK'] = (num_samples*args.output_size, num_samples*args.output_size) # double-check
-        tape_elements['H_Tp1_grad'] = (num_samples, args.hidden_size) # double-check
+        tape_elements['H_NTK'] = (num_samples*args.output_size, num_samples*args.output_size) 
+        tape_elements['H_Tp1_grad'] = (num_samples, args.hidden_size) 
         tape_elements['NTK'] = (num_samples*args.output_size, num_samples*args.output_size)
-        if args.single_output_y:
-            tape_elements['pred_y_grad'] = (num_samples, 1, args.output_size)
-        else:
-            tape_elements['pred_y_grad'] = (num_samples, args.trajectory_length, args.output_size)
-    tape_module = SimpleNamespace(**{k: np.zeros((args.num_seeds, int(args.num_epochs/args.log_every_e_epoch)) + v) for k,v in tape_elements.items()})
+        tape_elements['pred_y_grad'] = (num_samples, 1, args.output_size)
+    tape_module = SimpleNamespace(**{k: np.zeros((args.num_seeds, int(args.num_epochs/args.log_every_e_epoch)) + v,dtype=complex) for k,v in tape_elements.items()})
+    tape_module.NTK_distance = np.zeros((args.num_seeds))
     return tape_module
 
 def get_data_tape(args):
@@ -203,12 +286,12 @@ def get_data_tape(args):
         U = (args.output_size, args.output_size),
         V = (args.input_size, args.input_size), 
         X = (args.num_samples, args.trajectory_length, args.input_size),
+        P = (args.output_size, args.input_size),
+        P_inv = (args.output_size, args.input_size),
+        D = (args.output_size,), # find smart way to unify with the other D in args
     )
-    if args.single_output_y:
-        tape_elements['y'] = (args.num_samples, 1, args.output_size)
-    else:
-        tape_elements['y'] = (args.num_samples, args.trajectory_length, args.output_size)
-    tape_module = SimpleNamespace(**{k: np.zeros((args.num_seeds,) + v) for k,v in tape_elements.items()})
+    tape_elements['y'] = (args.num_samples, 1, args.output_size)
+    tape_module = SimpleNamespace(**{k: np.zeros((args.num_seeds,) + v,dtype=complex) for k,v in tape_elements.items()})
     return tape_module
 
 def matrix_power(matrix, exponent):
@@ -224,6 +307,15 @@ def identity_matrix(shape):
     for i in range(matrix.shape[0]):
         matrix[i,i] = 1
     return matrix
+
+def kernel_distance(A, B):
+    K_t1 = A
+    K_t2 = B
+    inner_product = np.sum(K_t1 * K_t2)
+    norm_t1 = np.linalg.norm(K_t1, 'fro')
+    norm_t2 = np.linalg.norm(K_t2, 'fro')
+    S_t1_t2 = 1 - inner_product / (norm_t1 * norm_t2)
+    return S_t1_t2
 
 def encode_json(data_dict):
     json_data = dict()
@@ -281,6 +373,36 @@ def get_SV_search_tape(args):
     tape_module = SimpleNamespace(**tape_elements)
     return tape_module
 
+def get_rich_lazy_search_tape(args, param1_len, param2_len, param3_len):                                                                           
+    if param3_len == None:
+        tape_elements = dict(
+            final_loss = np.zeros((param1_len, param2_len, args.num_seeds)),
+            input_output_modes = np.zeros((param1_len, param2_len, args.num_seeds, args.num_SV)),
+            recurrent_modes = np.zeros((param1_len, param2_len, args.num_seeds, args.num_SV)),
+            input_output_modes_mean = np.zeros((param1_len, param2_len)), 
+            recurrent_modes_mean = np.zeros((param1_len, param2_len)),
+            input_output_modes_sem = np.zeros((param1_len, param2_len)), 
+            recurrent_modes_sem = np.zeros((param1_len, param2_len)),
+            NTK_distance = np.zeros((param1_len, param2_len, args.num_seeds)),
+            NTK_distance_mean = np.zeros((param1_len, param2_len)),
+            NTK_distance_sem = np.zeros((param1_len, param2_len))
+        )
+    else:
+        tape_elements = dict(
+            final_loss = np.zeros((param1_len, param2_len, param3_len, args.num_seeds)),
+            input_output_modes = np.zeros((param1_len, param2_len, param3_len, args.num_seeds, args.num_SV)),
+            recurrent_modes = np.zeros((param1_len, param2_len, param3_len, args.num_seeds, args.num_SV)),
+            input_output_modes_mean = np.zeros((param1_len, param2_len, param3_len)), 
+            recurrent_modes_mean = np.zeros((param1_len, param2_len, param3_len)),
+            input_output_modes_sem = np.zeros((param1_len, param2_len, param3_len)), 
+            recurrent_modes_sem = np.zeros((param1_len, param2_len, param3_len)),
+            NTK_distance = np.zeros((param1_len, param2_len, param3_len, args.num_seeds)),
+            NTK_distance_mean = np.zeros((param1_len, param2_len, param3_len)),
+            NTK_distance_sem = np.zeros((param1_len, param2_len, param3_len))
+        )
+    tape_module = SimpleNamespace(**tape_elements)
+    return tape_module
+
 def _hash(obj):
     json_obj = encode_json(obj)
     return hash(json.dumps(json_obj, sort_keys=True))
@@ -299,20 +421,6 @@ def compute_effective_regularization_term(args, input_output_mode, recurrent_mod
 
 class BlindColours:
     def __init__(self, reverse_cmap=True):
-        # Set the visual style for seaborn plots
-#         sns.set_style("ticks", {
-#             'xtick.bottom': True,
-#             'xtick.top': False,
-#             'ytick.left': True,
-#             'ytick.right': False,
-#             'xtick.direction': 'out',
-#             'ytick.direction': 'out',
-#             'xtick.color': '.1',
-#             'ytick.color': '.1',
-#         })
-
-        # Set the context for seaborn plots to "talk" (a high level of detail)
-#         sns.set_context("talk")
 
         # Define a set of colors that are accessible to individuals with color blindness
         hex_colours = ["#d65c00", "#0071b2", "#009e73", "#cc78a6", "#e59c00", "#55b2e8", "#efe440", "#000000"]

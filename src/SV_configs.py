@@ -1,8 +1,12 @@
 import numpy as np
 
+# TODO: name more generally for eigenvalue and SV case
 
 def create_SV_trajectories(args):
-    S = np.zeros((args.trajectory_length, args.output_size, args.input_size)) 
+    if np.array(args.delta).dtype == complex or np.array(args.lambda_0).dtype == complex:
+        S = np.zeros((args.trajectory_length, args.output_size, args.input_size),dtype=complex)
+    else: 
+        S = np.zeros((args.trajectory_length, args.output_size, args.input_size)) 
     for alpha in range(args.num_SV):
         S_alpha = get_SV_trajectory(args, args.S_config[alpha], args.delta[alpha], args.lambda_0[alpha], args.S_T[alpha])
         S[:,alpha,alpha] = S_alpha
@@ -11,7 +15,10 @@ def create_SV_trajectories(args):
 
 def get_SV_trajectory(args, S_config, delta, lambda_0, S_T): 
     ## NOTE: for more custom-made SV trajectories, need to hard-code somewhere
-    S_alpha = np.zeros(args.trajectory_length)
+    if np.array(lambda_0).dtype == complex or np.array(delta).dtype == complex:
+        S_alpha = np.zeros(args.trajectory_length, dtype=complex)
+    else:
+        S_alpha = np.zeros(args.trajectory_length)
     if S_config == 'constant':
         for t in range(1, args.trajectory_length+1):
             S_t = delta*lambda_0 

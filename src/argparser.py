@@ -1,7 +1,4 @@
 import argparse
-import numpy as np
-from typing import Callable
-from dataclasses import field
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -38,6 +35,7 @@ def get_parser():
                         help='Whether to log output and its gradient')
     parser.add_argument('--compute_NTK', type=str2bool, default=False)
     parser.add_argument('--subsample_NTK', type=str2bool, default=True)
+    parser.add_argument('--subsample_H', type=str2bool, default=False)
     parser.add_argument('--nonlinear_RNN', type=str2bool, default=False)
 
     parser.add_argument('--trajectory_length', type=int, default=10)
@@ -63,19 +61,23 @@ def get_parser():
     parser.add_argument('--S_T', type=str2floatlist, default=[1,1,1,1])
     parser.add_argument('--S_TeqS_t', type=str2bool, default=True,
                         help='Flag to specify whether S_T evolves according to S_t dynamics or is separate. Overrides S_T parameter if mismatch.')
+    parser.add_argument('--task_dynamics', type=str, default='diagonalized',
+                        help='diagonalized (S specified), random_teacher, rotation')
+    parser.add_argument('--theta', type=float, default=None,
+                        help='angle for rotation task dynamics')
 
     
     parser.add_argument('--name', type=str, default=None,
                         help='Name of run (for saving)')
     
     parser.add_argument('--aligned_student_weights', type=str2bool, default=True)
+    parser.add_argument('--eigenspace_dynamics', type=str2bool, default=False,
+                        help='learning dynamics in eigenspace rather than SVD space')
     parser.add_argument('--zero_balanced', type=str2bool, default=True,
                         help='')
     parser.add_argument('--frozen_hidden_layer', type=str2bool, default=False,
                         help='')
     parser.add_argument('--frozen_input_output', type=str2bool, default=False,
-                        help='')
-    parser.add_argument('--single_output_y', type=str2bool, default=True,
                         help='')
 
     parser.add_argument('--inout_mode_init', type=str2floatlist, default=[1,1,1,1],

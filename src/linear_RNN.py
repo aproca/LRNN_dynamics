@@ -20,10 +20,7 @@ class LinearRNN_multiseed:
             self.W_h.requires_grad_()
 
     def forward(self, X): 
-        if self.args.single_output_y:
-            y_hat = torch.zeros((self.args.num_samples, 1, self.args.output_size))
-        else:
-            y_hat = torch.zeros((self.args.num_samples, self.args.trajectory_length, self.args.output_size))
+        y_hat = torch.zeros((self.args.num_samples, 1, self.args.output_size))
         h_t = torch.zeros((self.args.num_samples, self.args.hidden_size), requires_grad=False, dtype=torch.float64)
         h_trajectory = torch.zeros((self.args.num_samples, self.args.trajectory_length, self.args.hidden_size))
         for t in range(self.args.trajectory_length):
@@ -32,10 +29,7 @@ class LinearRNN_multiseed:
                 h_t = F.relu(h_t)
             y_t = torch.einsum("ij,bj->bi", self.W_y, h_t)
             h_trajectory[:,t] = h_t
-            if not self.args.single_output_y:
-                y_hat[:,t] = y_t
-        if self.args.single_output_y:
-            y_hat = y_t.reshape(y_t.shape[0], 1, -1)
+        y_hat = y_t.reshape(y_t.shape[0], 1, -1)
 
         return y_hat, h_trajectory
 
@@ -53,39 +47,62 @@ class LinearRNN_multiseed:
                     self.W_x -= self.args.lr*self.W_x.grad
                     self.W_y -= self.args.lr*self.W_y.grad
                     if e % self.args.log_every_e_epoch == 0:
-                        self.tape.W_x_grad[self.seed][int(e/self.args.log_every_e_epoch)] = self.W_x.grad.detach().numpy()
-                        self.tape.W_y_grad[self.seed][int(e/self.args.log_every_e_epoch)] = self.W_y.grad.detach().numpy()
+                        self.tape.W_x_grad[self.seed][int(e/self.args.log_every_e_epoch)] = np.real_if_close(self.W_x.grad.detach().numpy())
+                        self.tape.W_y_grad[self.seed][int(e/self.args.log_every_e_epoch)] = np.real_if_close(self.W_y.grad.detach().numpy())
                     self.W_x.grad = None
                     self.W_y.grad = None
                 if not self.args.frozen_hidden_layer:
                     self.W_h -= self.args.lr*self.W_h.grad
                     if e % self.args.log_every_e_epoch == 0:
-                        self.tape.W_h_grad[self.seed][int(e/self.args.log_every_e_epoch)] = self.W_h.grad.detach().numpy()
+                        self.tape.W_h_grad[self.seed][int(e/self.args.log_every_e_epoch)] = np.real_if_close(self.W_h.grad.detach().numpy())
                     self.W_h.grad = None
             if e % self.args.log_every_e_epoch == 0 and self.args.log_H:
-                self.tape.H[self.seed][int(e/self.args.log_every_e_epoch)] = copy.deepcopy(h_trajectory.detach().numpy())
+                if self.args.subsample_H:
+                    self.tape.H[self.seed][int(e/self.args.log_every_e_epoch)] = copy.deepcopy(h_trajectory.detach().numpy())[:200,-1].reshape(200, 1, self.args.hidden_size)
+                else:
+                    self.tape.H[self.seed][int(e/self.args.log_every_e_epoch)] = copy.deepcopy(h_trajectory.detach().numpy())
             if e % self.args.log_every_e_epoch == 0 and self.args.log_y_hat:
                 self.tape.y_hat[self.seed][int(e/self.args.log_every_e_epoch)] = copy.deepcopy(y_hat.detach().numpy())
             if (e < self.args.num_epochs - 1) :
                 if (e+1) % self.args.log_every_e_epoch == 0: 
-                    self.tape.W_x[self.seed][int((e+1)/self.args.log_every_e_epoch)] = copy.deepcopy(self.W_x.detach().numpy())
-                    self.tape.W_h[self.seed][int((e+1)/self.args.log_every_e_epoch)] = copy.deepcopy(self.W_h.detach().numpy())
-                    self.tape.W_y[self.seed][int((e+1)/self.args.log_every_e_epoch)] = copy.deepcopy(self.W_y.detach().numpy())
+                    self.tape.W_x[self.seed][int((e+1)/self.args.log_every_e_epoch)] = np.real_if_close(copy.deepcopy(self.W_x.detach().numpy()))
+                    self.tape.W_h[self.seed][int((e+1)/self.args.log_every_e_epoch)] = np.real_if_close(copy.deepcopy(self.W_h.detach().numpy()))
+                    self.tape.W_y[self.seed][int((e+1)/self.args.log_every_e_epoch)] = np.real_if_close(copy.deepcopy(self.W_y.detach().numpy()))
     
-    def project_SVD_space(self, data_tape):
+    def project_SVD_space(self, data_tape): ## rename to include eigenspace
         if self.args.aligned_student_weights:
+            if self.args.eigenspace_dynamics:
+                for e in range(int(self.args.num_epochs/self.args.log_every_e_epoch)):
+                    for alpha in range(self.args.num_SV):
+                        self.tape.input_modes[self.seed][e][alpha] = (data_tape.P_inv[self.seed] @ self.tape.W_x[self.seed][e] @ data_tape.P[self.seed])[alpha,alpha]
+                        self.tape.recurrent_modes[self.seed][e][alpha] = (data_tape.P_inv[self.seed] @ self.tape.W_h[self.seed][e] @ data_tape.P[self.seed])[alpha,alpha]
+                        self.tape.output_modes[self.seed][e][alpha] = (data_tape.P_inv[self.seed] @ self.tape.W_y[self.seed][e] @ data_tape.P[self.seed])[alpha,alpha]
+                        self.tape.input_output_modes[self.seed][e][alpha] = self.tape.input_modes[self.seed][e, alpha]*self.tape.output_modes[self.seed][e, alpha]
+            else:
+                for e in range(int(self.args.num_epochs/self.args.log_every_e_epoch)):
+                    for alpha in range(self.args.num_SV):
+                        self.tape.input_modes[self.seed][e][alpha] = (self.tape.R_x[self.seed][0].T @ self.tape.W_x[self.seed][e] @ data_tape.V[self.seed])[alpha,alpha]
+                        self.tape.recurrent_modes[self.seed][e][alpha] = (self.tape.R_y[self.seed][0].T @ self.tape.W_h[self.seed][e] @ self.tape.R_x[self.seed][0])[alpha,alpha]
+                        self.tape.output_modes[self.seed][e][alpha] = (data_tape.U[self.seed].T @ self.tape.W_y[self.seed][e] @ self.tape.R_y[self.seed][0])[alpha,alpha]
+                        self.tape.input_output_modes[self.seed][e][alpha] = self.tape.input_modes[self.seed][e, alpha]*self.tape.output_modes[self.seed][e, alpha]
+        elif self.args.hidden_size == self.args.input_size and self.args.hidden_size == self.args.output_size:
             for e in range(int(self.args.num_epochs/self.args.log_every_e_epoch)):
-                for alpha in range(self.args.num_SV):
-                    self.tape.input_modes[self.seed][e][alpha] = (self.tape.R_x[self.seed][0].T @ self.tape.W_x[self.seed][e] @ data_tape.V[self.seed])[alpha,alpha]
-                    self.tape.recurrent_modes[self.seed][e][alpha] = (self.tape.R_y[self.seed][0].T @ self.tape.W_h[self.seed][e] @ self.tape.R_x[self.seed][0])[alpha,alpha]
-                    self.tape.output_modes[self.seed][e][alpha] = (data_tape.U[self.seed].T @ self.tape.W_y[self.seed][e] @ self.tape.R_y[self.seed][0])[alpha,alpha]
-                    self.tape.input_output_modes[self.seed][e][alpha] = self.tape.input_modes[self.seed][e, alpha]*self.tape.output_modes[self.seed][e, alpha]
-        else:
-            for e in range(int(self.args.num_epochs/self.args.log_every_e_epoch)):
-                self.tape.input_modes[self.seed][e] = np.linalg.svd(self.tape.W_x[self.seed,e])[1]
-                self.tape.recurrent_modes[self.seed][e] = np.linalg.svd(self.tape.W_h[self.seed,e])[1]
-                self.tape.output_modes[self.seed][e] = np.linalg.svd(self.tape.W_y[self.seed,e])[1]
-                self.tape.input_output_modes[self.seed][e] = np.linalg.svd(self.tape.W_y[self.seed,e] @ self.tape.W_x[self.seed,e])[1]
+                try:
+                    self.tape.input_modes[self.seed][e] = np.linalg.svd(self.tape.W_x[self.seed,e])[1]
+                except: 
+                    self.tape.input_modes[self.seed][e] = 0
+                try:
+                    self.tape.recurrent_modes[self.seed][e] = np.linalg.svd(self.tape.W_h[self.seed,e])[1]
+                except:
+                    self.tape.recurrent_modes[self.seed][e] = 0
+                try:
+                    self.tape.output_modes[self.seed][e] = np.linalg.svd(self.tape.W_y[self.seed,e])[1]
+                except: 
+                    self.tape.output_modes[self.seed][e] = 0
+                try:
+                    self.tape.input_output_modes[self.seed][e] = np.linalg.svd(self.tape.W_y[self.seed,e] @ self.tape.W_x[self.seed,e])[1]
+                except:
+                    self.tape.input_output_modes[self.seed][e] = 0
     
     def compute_gradient_H(self):
         if self.args.log_H:
@@ -128,7 +145,7 @@ class LinearRNN_multiseed:
                 error = (y.reshape(y_hat.shape)-y_hat).T        # N_y x P
                 self.tape.H_Tp1_grad[self.seed][e] = (self.tape.H_NTK[self.seed][e] @ error.reshape(self.args.output_size*num_samples).reshape(self.args.output_size,num_samples)).T 
 
-    def compute_NTK(self, X, y, seed): # correct; only for single-output y; approximations get worse with more samples (>~50)
+    def compute_NTK(self, X, y, seed): 
         if self.args.compute_NTK:
             num_samples = self.args.num_samples
             if self.args.subsample_NTK:
@@ -161,3 +178,5 @@ class LinearRNN_multiseed:
                 error = (y.reshape(y_hat.shape) - y_hat).T
                 # non-vectorized
                 self.tape.pred_y_grad[seed][e] = (self.tape.NTK[seed][e] @ error.reshape(self.args.output_size*num_samples)).reshape(self.args.output_size,1, num_samples).T 
+                NTK_reshape = self.tape.NTK[seed].reshape(int(self.args.num_epochs/self.args.log_every_e_epoch), num_samples*self.args.output_size, num_samples*self.args.output_size)
+                self.tape.NTK_distance[seed] = utils.kernel_distance(NTK_reshape[0], NTK_reshape[-1])

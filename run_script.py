@@ -3,13 +3,14 @@ from src import simulate
 from src import SV_configs
 from src import utils
 from pathlib import Path
-import numpy as np
 
 if __name__ == "__main__":
     parser = argparser.get_parser() 
     args = parser.parse_args()
-    # commment-out and hard-code for non-default trajectories
-    args.S = SV_configs.create_SV_trajectories(args)
+    if args.eigenspace_dynamics:
+        args.D = SV_configs.create_SV_trajectories
+    else:
+        args.S = SV_configs.create_SV_trajectories(args)
     data_path = Path(args.data_out_dir) / args.name
 
     # Prevents re-running simulation if already exists
@@ -23,7 +24,6 @@ if __name__ == "__main__":
         run = False
         tape = utils.load_dict(data_path / 'tape.pkl')
         data_tape = utils.load_dict(data_path / 'data_tape.pkl')
-        # logger.info(f"Data found at {data_path}. Loaded data.")
         print(f"Data found at {data_path}. Loaded data.")
     except (FileNotFoundError, ValueError, TypeError) as e:
         if type(e) == FileNotFoundError:
